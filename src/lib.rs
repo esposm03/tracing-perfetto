@@ -114,8 +114,10 @@ impl<W: PerfettoWriter> PerfettoLayer<W> {
             log.packet.insert(0, p);
         }
 
-        let mut packet = idl::TracePacket::default();
-        packet.data = Some(idl::trace_packet::Data::TrackDescriptor(track_descriptor));
+        let packet = idl::TracePacket {
+            data: Some(idl::trace_packet::Data::TrackDescriptor(track_descriptor)),
+            ..Default::default()
+        };
         log.packet.insert(1, packet);
 
         // if let Some(t) = track_descriptor {
@@ -161,7 +163,7 @@ struct TrackNameVisitor<'a> {
     user_track_name: &'a mut Option<String>,
 }
 
-impl<'a> Visit for TrackNameVisitor<'a> {
+impl Visit for TrackNameVisitor<'_> {
     // fn record_u64(&mut self, field: &Field, value: u64) {
     //     if field.name() == "perfetto_track_id" {
     //         *self.user_track_id = Some(value);
@@ -255,7 +257,7 @@ where
         // resolve the optional track descriptor for this span (either inherited from parent or user set, or None)
         let span_track_descriptor = user_track_name
             .map(|name| {
-                let track_desc = create_track_descriptor(
+                create_track_descriptor(
                     Some(unique_uuid()),                 // uuid
                     Some(self.process_track_uuid.get()), // parent_uuid
                     Some(name),                          // name
@@ -264,15 +266,14 @@ where
                     // current_thread_descriptor().into(), // thread descriptor
                     None, // thread descriptor
                     None,
-                );
-                track_desc
+                )
             })
             .or(inherited_track_descriptor);
 
         let final_uuid = span_track_descriptor
             .as_ref()
             .map(|desc| desc.uuid())
-            .unwrap_or_else(|| current_thread_uuid());
+            .unwrap_or_else(current_thread_uuid);
 
         let event = create_event(
             final_uuid, // span track id if exists, otherwise thread track id
@@ -353,15 +354,16 @@ where
             Some(idl::track_event::Type::Instant),
         );
 
-        let mut packet = idl::TracePacket::default();
-        // packet.data = Some(idl::trace_packet::Data::TrackEvent(track_event));
-        packet.trusted_pid = Some(std::process::id() as _);
-        packet.timestamp = chrono::Local::now().timestamp_nanos_opt().map(|t| t as _);
-        packet.optional_trusted_packet_sequence_id = Some(
-            idl::trace_packet::OptionalTrustedPacketSequenceId::TrustedPacketSequenceId(
-                self.sequence_id.get() as _,
+        let mut packet = idl::TracePacket {
+            trusted_pid: Some(std::process::id() as _),
+            timestamp: chrono::Local::now().timestamp_nanos_opt().map(|t| t as _),
+            optional_trusted_packet_sequence_id: Some(
+                idl::trace_packet::OptionalTrustedPacketSequenceId::TrustedPacketSequenceId(
+                    self.sequence_id.get() as _,
+                ),
             ),
-        );
+            ..Default::default()
+        };
 
         if let Some(span) = ctx.event_span(event) {
             if let Some(span_state) = span.extensions_mut().get_mut::<PerfettoSpanState>() {
@@ -400,7 +402,7 @@ where
             .track_descriptor
             .as_ref()
             .map(|d| d.uuid())
-            .unwrap_or_else(|| current_thread_uuid());
+            .unwrap_or_else(current_thread_uuid);
 
         let mut packet = idl::TracePacket::default();
         let meta = span.metadata();
@@ -466,24 +468,28 @@ impl Visit for DebugAnnotations {
     impl_record!(record_u64, u64, IntValue, |v: u64| v as i64);
 
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        let mut annotation = idl::DebugAnnotation::default();
-        annotation.name_field = Some(idl::debug_annotation::NameField::Name(
-            field.name().to_string(),
-        ));
-        annotation.value = Some(idl::debug_annotation::Value::StringValue(format!(
-            "{value:?}"
-        )));
+        let annotation = idl::DebugAnnotation {
+            name_field: Some(idl::debug_annotation::NameField::Name(
+                field.name().to_string(),
+            )),
+            value: Some(idl::debug_annotation::Value::StringValue(format!(
+                "{value:?}"
+            ))),
+            ..Default::default()
+        };
         self.annotations.push(annotation);
     }
 
     fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
-        let mut annotation = idl::DebugAnnotation::default();
-        annotation.name_field = Some(idl::debug_annotation::NameField::Name(
-            field.name().to_string(),
-        ));
-        annotation.value = Some(idl::debug_annotation::Value::StringValue(format!(
-            "{value}"
-        )));
+        let annotation = idl::DebugAnnotation {
+            name_field: Some(idl::debug_annotation::NameField::Name(
+                field.name().to_string(),
+            )),
+            value: Some(idl::debug_annotation::Value::StringValue(format!(
+                "{value}"
+            ))),
+            ..Default::default()
+        };
         self.annotations.push(annotation);
     }
 }
@@ -550,7 +556,7 @@ mod tests {
             let demo_span = trace_span!("simple_span",);
             let _enter = demo_span.enter();
         }
-        assert!(extra_writer.buf.lock().unwrap().len() > 0);
+        assert!(!extra_writer.buf.lock().unwrap().is_empty());
         let trace = idl::Trace::decode(extra_writer.buf.lock().unwrap().as_slice()).unwrap();
 
         let mut track_events_seen = 0;
@@ -568,7 +574,7 @@ mod tests {
             match event.r#type() {
                 track_event::Type::SliceBegin => saw_slice_begin = true,
                 track_event::Type::SliceEnd => saw_slice_end = true,
-                _ => assert!(false, "Unexpected track event"),
+                other => unreachable!("Unexpected track event {other:?}"),
             }
         }
         assert_eq!(track_events_seen, 2);
@@ -596,7 +602,7 @@ mod tests {
             let _enter = demo_span.enter();
             demo_span.record("extra_arg", "Some Extra Data");
         }
-        assert!(extra_writer.buf.lock().unwrap().len() > 0);
+        assert!(!extra_writer.buf.lock().unwrap().is_empty());
         let trace = idl::Trace::decode(extra_writer.buf.lock().unwrap().as_slice()).unwrap();
 
         let mut track_events_seen = 0;
@@ -648,7 +654,7 @@ mod tests {
                     // The SliceEnd won't have any arguments
                     assert_eq!(event.debug_annotations.len(), 0);
                 }
-                _ => assert!(false, "Unexpected track event"),
+                other => unreachable!("Unexpected track event {other:?}"),
             }
         }
         assert_eq!(track_events_seen, 2);

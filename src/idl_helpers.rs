@@ -54,16 +54,17 @@ pub fn create_track_descriptor(
     thread: Option<idl::ThreadDescriptor>,
     counter: Option<idl::CounterDescriptor>,
 ) -> idl::TrackDescriptor {
-    let mut desc = idl::TrackDescriptor::default();
-    desc.uuid = uuid;
-    desc.parent_uuid = parent_uuid;
-    desc.static_or_dynamic_name = name
-        .map(|s| s.as_ref().to_string())
-        .map(idl::track_descriptor::StaticOrDynamicName::Name);
-    desc.process = process;
-    desc.thread = thread;
-    desc.counter = counter;
-    desc
+    idl::TrackDescriptor {
+        uuid,
+        parent_uuid,
+        process,
+        thread,
+        counter,
+        static_or_dynamic_name: name
+            .map(|s| s.as_ref().to_string())
+            .map(idl::track_descriptor::StaticOrDynamicName::Name),
+        ..Default::default()
+    }
 }
 
 pub fn current_process_descriptor() -> idl::ProcessDescriptor {
@@ -98,9 +99,11 @@ pub fn create_event(
     debug_annotations: DebugAnnotations,
     r#type: Option<idl::track_event::Type>,
 ) -> idl::TrackEvent {
-    let mut event = idl::TrackEvent::default();
-    event.track_uuid = Some(track_uuid);
-    event.categories = vec!["".to_string()];
+    let mut event = idl::TrackEvent {
+        track_uuid: Some(track_uuid),
+        categories: vec!["".to_string()],
+        ..Default::default()
+    };
     if let Some(name) = name {
         event.name_field = Some(idl::track_event::NameField::Name(name.to_string()));
     }
@@ -111,9 +114,11 @@ pub fn create_event(
         event.debug_annotations = debug_annotations.annotations;
     }
     if let Some((file, line)) = location {
-        let mut source_location = idl::SourceLocation::default();
-        source_location.file_name = Some(file.to_owned());
-        source_location.line_number = Some(line);
+        let source_location = idl::SourceLocation {
+            file_name: Some(file.to_owned()),
+            line_number: Some(line),
+            ..Default::default()
+        };
         let location = idl::track_event::SourceLocationField::SourceLocation(source_location);
         event.source_location_field = Some(location);
     }
