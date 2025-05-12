@@ -124,3 +124,17 @@ pub fn create_event(
     }
     event
 }
+
+pub fn create_screenshot_event(track_uuid: u64, bytes: Vec<u8>) -> idl::TrackEvent {
+    let mut event = idl::TrackEvent {
+        track_uuid: Some(track_uuid),
+        name_field: Some(idl::track_event::NameField::Name("Screenshot".to_string())),
+        categories: vec!["android_screenshot".to_string()],
+        screenshot: Some(idl::Screenshot {
+            jpg_image: Some(bytes),
+        }),
+        ..Default::default()
+    };
+    event.set_type(idl::track_event::Type::Instant);
+    event
+}

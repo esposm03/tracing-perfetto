@@ -6,9 +6,10 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, Registry};
 
 #[tokio::test]
 async fn write() -> anyhow::Result<()> {
-    let file = std::env::temp_dir().join("test.pftrace");
+    let file = std::path::Path::new("test.pftrace");
     let perfetto_layer = PerfettoLayer::new(std::sync::Mutex::new(std::fs::File::create(&file)?))
-        .with_debug_annotations(true);
+        .with_debug_annotations(true)
+        .with_screenshots(true);
 
     let fmt_layer = fmt::layer()
         .with_writer(std::io::stdout)
@@ -19,6 +20,7 @@ async fn write() -> anyhow::Result<()> {
 
     tracing::subscriber::set_global_default(subscriber)?;
 
+    // screenshot();
     info!(?file, "start");
 
     let demo_span = span!(
@@ -64,3 +66,11 @@ async fn async_fn() {
 async fn async_inner() {
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 }
+
+// fn screenshot() {
+//     event!(
+//         tracing::Level::INFO,
+//         screenshot_jpeg_bytes = include_bytes!("../cat.jpg").as_slice(),
+//         "Test",
+//     );
+// }

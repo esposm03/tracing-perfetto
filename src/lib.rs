@@ -2,18 +2,18 @@
 #![forbid(unsafe_code)]
 
 use bytes::BytesMut;
-use idl_helpers::process_descriptor;
 use idl_helpers::{
-    create_event, create_track_descriptor, current_thread_uuid, unique_uuid, DebugAnnotations,
+    create_event, create_track_descriptor, current_thread_uuid, process_descriptor, unique_uuid,
 };
+use idl_helpers::{create_screenshot_event, DebugAnnotations};
 use prost::Message;
 use std::io::Write;
 use tracing::field::Field;
 use tracing::field::Visit;
-use tracing::span;
 use tracing::Event;
 use tracing::Id;
 use tracing::Subscriber;
+use tracing::{error, span};
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
@@ -59,6 +59,7 @@ impl<W: for<'writer> MakeWriter<'writer> + 'static> PerfettoWriter for W {
 #[derive(Default)]
 struct Config {
     debug_annotations: bool,
+    screenshots: bool,
     filter: Option<fn(&str) -> bool>,
 }
 
@@ -107,6 +108,11 @@ impl<W: PerfettoWriter> PerfettoLayer<W> {
         self
     }
 
+    pub fn with_screenshots(mut self, value: bool) -> Self {
+        self.config.screenshots = value;
+        self
+    }
+
     fn write_log(&self, mut log: idl::Trace, track_descriptor: idl::TrackDescriptor) {
         let mut buf = BytesMut::new();
 
@@ -129,6 +135,7 @@ impl<W: PerfettoWriter> PerfettoLayer<W> {
         // }
 
         let Ok(_) = log.encode(&mut buf) else {
+            error!("Encoding of {log:?} failed");
             return;
         };
         _ = self.writer.write_log(buf);
@@ -200,6 +207,22 @@ impl Visit for PerfettoVisitor {
     fn record_debug(&mut self, field: &Field, _value: &dyn std::fmt::Debug) {
         if (self.filter)(field.name()) {
             self.perfetto = true;
+        }
+    }
+}
+
+#[derive(Default)]
+struct ScreenshotVisitor {
+    bytes: Option<Vec<u8>>,
+}
+
+impl Visit for ScreenshotVisitor {
+    fn record_debug(&mut self, _field: &Field, _value: &dyn std::fmt::Debug) {}
+
+    fn record_bytes(&mut self, field: &Field, value: &[u8]) {
+        println!("Visiting {}", field.name());
+        if field.name() == "screenshot_jpeg_bytes" {
+            self.bytes = Some(value.to_vec());
         }
     }
 }
@@ -339,20 +362,30 @@ where
         let metadata = event.metadata();
         let location = metadata.file().zip(metadata.line());
 
+        let thread_track_uuid = current_thread_uuid();
+        let mut screen_visitor = ScreenshotVisitor::default();
         let mut debug_annotations = DebugAnnotations::default();
+
+        if self.config.screenshots {
+            event.record(&mut screen_visitor);
+        }
 
         if self.config.debug_annotations {
             event.record(&mut debug_annotations);
         }
 
-        let thread_track_uuid = current_thread_uuid();
-        let mut track_event = create_event(
-            0,
-            Some(metadata.name()),
-            location,
-            debug_annotations,
-            Some(idl::track_event::Type::Instant),
-        );
+        // If the event contained a screenshot
+        let mut track_event = if let Some(screenshot) = screen_visitor.bytes {
+            create_screenshot_event(thread_track_uuid, screenshot)
+        } else {
+            create_event(
+                0,
+                Some(metadata.name()),
+                location,
+                debug_annotations,
+                Some(idl::track_event::Type::Instant),
+            )
+        };
 
         let mut packet = idl::TracePacket {
             trusted_pid: Some(std::process::id() as _),
